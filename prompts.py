@@ -112,3 +112,31 @@ Schema:
 Feedback:
 {feedback_text}
 """
+
+
+def build_native_expression_extraction_prompt(feedback_text: str) -> str:
+    return f"""
+Extract native/natural English expressions from this feedback.
+Return only valid JSON, no markdown.
+Schema:
+{{
+  "expressions": [
+    {{
+      "expression": "...",
+      "meaning": "brief meaning in Spanish",
+      "scenario": "business|restaurant|friends|travel|general",
+      "tone": "casual|professional|neutral",
+      "example": "short example sentence in English"
+    }}
+  ]
+}}
+
+Rules:
+- Extract expressions the user could realistically reuse.
+- Prefer phrases that sound natural, not textbook-like.
+- Avoid duplicates.
+- Maximum 8 expressions.
+
+Feedback:
+{feedback_text}
+"""
