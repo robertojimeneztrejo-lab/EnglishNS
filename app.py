@@ -6,6 +6,7 @@ from prompts import build_roleplay_prompt, build_conversation_prompt
 from gemini_client import generate_text, GeminiClientError
 from feedback import generate_feedback
 from storage import load_profile, load_sessions
+from auth import authenticate_user, create_user, normalize_username
 
 st.set_page_config(
     page_title="NativeFlow English",
@@ -34,6 +35,8 @@ def init_state():
         "selected_character": None,
         "selected_level": "Intermedio",
         "selected_tone": "Profesional",
+        "authenticated": False,
+        "username": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -62,7 +65,60 @@ def send_user_message(user_text):
     st.session_state.history.append({"role": "assistant", "content": answer})
 
 
+def show_login_screen():
+    st.markdown('<div class="main-title">NativeFlow English</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="subtitle">Inicia sesión para guardar tu historial, errores y expresiones nativas por usuario.</div>',
+        unsafe_allow_html=True,
+    )
+
+    login_tab, register_tab = st.tabs(["Iniciar sesión", "Crear usuario"])
+
+    with login_tab:
+        with st.form("login_form"):
+            username = st.text_input("Usuario", placeholder="ej. roberto")
+            password = st.text_input("Contraseña", type="password")
+            submitted = st.form_submit_button("Entrar", use_container_width=True)
+
+        if submitted:
+            username = normalize_username(username)
+            if authenticate_user(username, password):
+                st.session_state.authenticated = True
+                st.session_state.username = username
+                st.success("Sesión iniciada correctamente.")
+                st.rerun()
+            else:
+                st.error("Usuario o contraseña incorrectos.")
+
+    with register_tab:
+        with st.form("register_form"):
+            new_username = st.text_input("Nuevo usuario", placeholder="ej. roberto")
+            new_password = st.text_input("Nueva contraseña", type="password")
+            confirm_password = st.text_input("Confirmar contraseña", type="password")
+            create_submitted = st.form_submit_button("Crear cuenta", use_container_width=True)
+
+        if create_submitted:
+            if new_password != confirm_password:
+                st.error("Las contraseñas no coinciden.")
+            else:
+                ok, message = create_user(new_username, new_password)
+                if ok:
+                    st.success(message + " Ahora puedes iniciar sesión.")
+                else:
+                    st.error(message)
+
+    st.caption("Nota: este login es básico para pruebas. Para una versión pública conviene migrar a Supabase Auth, Firebase o Google Login.")
+
+
+def current_user():
+    return st.session_state.get("username")
+
+
 init_state()
+
+if not st.session_state.authenticated:
+    show_login_screen()
+    st.stop()
 
 st.markdown('<div class="main-title">NativeFlow English</div>', unsafe_allow_html=True)
 st.markdown(
@@ -72,6 +128,13 @@ st.markdown(
 
 with st.sidebar:
     st.header("Configuración")
+    st.caption(f"Usuario: **{current_user()}**")
+    if st.button("Cerrar sesión", use_container_width=True):
+        reset_session()
+        st.session_state.authenticated = False
+        st.session_state.username = None
+        st.rerun()
+    st.divider()
 
     scenario = st.selectbox("Escenario", list(SCENARIOS.keys()), index=list(SCENARIOS.keys()).index(st.session_state.selected_scenario))
     st.session_state.selected_scenario = scenario
@@ -105,7 +168,7 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Tu perfil")
-    profile = load_profile()
+    profile = load_profile(current_user())
     st.metric("Sesiones", profile.get("total_sessions", 0))
     if profile.get("last_practice"):
         st.caption(f"Última práctica: {profile['last_practice']}")
@@ -144,6 +207,7 @@ with tab_chat:
                             character,
                             level,
                             tone,
+                            current_user(),
                         )
                         st.session_state.feedback = feedback_text
                     st.rerun()
@@ -170,7 +234,7 @@ with tab_chat:
 
 with tab_profile:
     st.subheader("Errores recurrentes")
-    profile = load_profile()
+    profile = load_profile(current_user())
     errors = profile.get("common_errors", [])
     if errors:
         df = pd.DataFrame(errors)
@@ -180,7 +244,7 @@ with tab_profile:
 
 with tab_native:
     st.subheader("Expresiones nativas que pudiste usar")
-    profile = load_profile()
+    profile = load_profile(current_user())
     expressions = profile.get("native_expressions", [])
 
     if expressions:
@@ -201,7 +265,7 @@ Ejemplo: `{item.get('example', '')}`
 
 with tab_history:
     st.subheader("Últimas sesiones")
-    sessions = load_sessions(limit=10)
+    sessions = load_sessions(limit=10, username=current_user())
     if not sessions:
         st.info("Todavía no hay sesiones guardadas.")
     for idx, session in enumerate(sessions, start=1):
@@ -232,8 +296,8 @@ GEMINI_MODEL = "gemini-2.5-flash"
     st.subheader("Próximas mejoras sugeridas")
     st.markdown(
         """
-- Login de usuario.  
 - Base de datos Supabase.  
+- Recuperación de contraseña.  
 - Modo carrera profesional.  
 - Sistema de XP y niveles.  
 - Audio con Gemini Live o TTS.  
