@@ -30,6 +30,7 @@ def load_profile():
     return read_json(PROFILE_PATH, {
         "total_sessions": 0,
         "common_errors": [],
+        "native_expressions": [],
         "strengths": [],
         "last_practice": None,
     })
