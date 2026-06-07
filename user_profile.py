@@ -2,8 +2,8 @@ from datetime import datetime
 from storage import load_profile, save_profile
 
 
-def update_profile_with_errors(errors: list[dict]):
-    profile = load_profile()
+def update_profile_with_errors(errors: list[dict], username: str | None = None):
+    profile = load_profile(username)
     profile["total_sessions"] = profile.get("total_sessions", 0) + 1
     profile["last_practice"] = datetime.now().isoformat(timespec="seconds")
 
@@ -34,12 +34,12 @@ def update_profile_with_errors(errors: list[dict]):
 
     existing = sorted(existing, key=lambda x: x.get("count", 1), reverse=True)[:25]
     profile["common_errors"] = existing
-    save_profile(profile)
+    save_profile(profile, username)
     return profile
 
 
-def update_profile_with_native_expressions(expressions: list[dict]):
-    profile = load_profile()
+def update_profile_with_native_expressions(expressions: list[dict], username: str | None = None):
+    profile = load_profile(username)
     existing = profile.get("native_expressions", [])
 
     for expression in expressions:
@@ -72,5 +72,5 @@ def update_profile_with_native_expressions(expressions: list[dict]):
 
     existing = sorted(existing, key=lambda x: x.get("count", 1), reverse=True)[:50]
     profile["native_expressions"] = existing
-    save_profile(profile)
+    save_profile(profile, username)
     return profile
