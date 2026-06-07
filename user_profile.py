@@ -36,3 +36,41 @@ def update_profile_with_errors(errors: list[dict]):
     profile["common_errors"] = existing
     save_profile(profile)
     return profile
+
+
+def update_profile_with_native_expressions(expressions: list[dict]):
+    profile = load_profile()
+    existing = profile.get("native_expressions", [])
+
+    for expression in expressions:
+        phrase = expression.get("expression", "").strip()
+        if not phrase:
+            continue
+
+        found = False
+        for item in existing:
+            if item.get("expression", "").lower() == phrase.lower():
+                item["count"] = item.get("count", 1) + 1
+                item["meaning"] = expression.get("meaning", item.get("meaning", ""))
+                item["scenario"] = expression.get("scenario", item.get("scenario", "general"))
+                item["tone"] = expression.get("tone", item.get("tone", "neutral"))
+                item["example"] = expression.get("example", item.get("example", ""))
+                item["last_seen"] = datetime.now().isoformat(timespec="seconds")
+                found = True
+                break
+
+        if not found:
+            existing.append({
+                "expression": phrase,
+                "meaning": expression.get("meaning", ""),
+                "scenario": expression.get("scenario", "general"),
+                "tone": expression.get("tone", "neutral"),
+                "example": expression.get("example", ""),
+                "count": 1,
+                "last_seen": datetime.now().isoformat(timespec="seconds"),
+            })
+
+    existing = sorted(existing, key=lambda x: x.get("count", 1), reverse=True)[:50]
+    profile["native_expressions"] = existing
+    save_profile(profile)
+    return profile
