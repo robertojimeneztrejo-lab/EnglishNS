@@ -111,7 +111,7 @@ with st.sidebar:
         st.caption(f"Última práctica: {profile['last_practice']}")
 
 
-tab_chat, tab_profile, tab_history, tab_help = st.tabs(["Simulador", "Perfil de errores", "Historial", "Guía"])
+tab_chat, tab_profile, tab_native, tab_history, tab_help = st.tabs(["Simulador", "Perfil de errores", "Expresiones nativas", "Historial", "Guía"])
 
 with tab_chat:
     left, right = st.columns([2, 1])
@@ -177,6 +177,27 @@ with tab_profile:
         st.dataframe(df, use_container_width=True)
     else:
         st.info("Aún no hay errores guardados. Finaliza una conversación para construir tu perfil.")
+
+with tab_native:
+    st.subheader("Expresiones nativas que pudiste usar")
+    profile = load_profile()
+    expressions = profile.get("native_expressions", [])
+
+    if expressions:
+        df = pd.DataFrame(expressions)
+        preferred_columns = ["expression", "meaning", "scenario", "tone", "example", "count"]
+        available_columns = [col for col in preferred_columns if col in df.columns]
+        st.dataframe(df[available_columns], use_container_width=True)
+
+        st.markdown("### Top 5 para practicar esta semana")
+        for item in expressions[:5]:
+            st.markdown(f"""
+**{item.get('expression', '')}**  
+Significado: {item.get('meaning', '')}  
+Ejemplo: `{item.get('example', '')}`
+""")
+    else:
+        st.info("Aún no hay expresiones guardadas. Finaliza una conversación para construir esta lista.")
 
 with tab_history:
     st.subheader("Últimas sesiones")
