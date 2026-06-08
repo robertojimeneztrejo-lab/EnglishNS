@@ -1,55 +1,10 @@
-import json
-import re
-from pathlib import Path
 from datetime import datetime
+from typing import Any
 
-DATA_DIR = Path("data")
-USERS_DATA_DIR = DATA_DIR / "user_data"
-
-
-def ensure_data_dir():
-    DATA_DIR.mkdir(exist_ok=True)
-    USERS_DATA_DIR.mkdir(exist_ok=True)
+from supabase_client import get_supabase_client
 
 
-def safe_username(username: str | None) -> str:
-    username = (username or "default").strip().lower()
-    username = re.sub(r"[^a-zA-Z0-9_.-]", "_", username)
-    return username or "default"
-
-
-def get_user_dir(username: str | None):
-    ensure_data_dir()
-    user_dir = USERS_DATA_DIR / safe_username(username)
-    user_dir.mkdir(exist_ok=True)
-    return user_dir
-
-
-def get_profile_path(username: str | None):
-    return get_user_dir(username) / "learning_profile.json"
-
-
-def get_sessions_path(username: str | None):
-    return get_user_dir(username) / "sessions.json"
-
-
-def read_json(path: Path, default):
-    ensure_data_dir()
-    if not path.exists():
-        return default
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return default
-
-
-def write_json(path: Path, data):
-    ensure_data_dir()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def default_profile():
+def default_profile() -> dict[str, Any]:
     return {
         "total_sessions": 0,
         "common_errors": [],
@@ -59,28 +14,180 @@ def default_profile():
     }
 
 
-def load_profile(username: str | None = None):
-    return read_json(get_profile_path(username), default_profile())
-
-
-def save_profile(profile, username: str | None = None):
-    write_json(get_profile_path(username), profile)
+def _safe_username(username: str | None) -> str:
+    return (username or "default").strip().lower() or "default"
 
 
 def save_session(scenario, character, level, tone, history, feedback, username: str | None = None):
-    sessions = read_json(get_sessions_path(username), [])
-    sessions.append({
-        "created_at": datetime.now().isoformat(timespec="seconds"),
+    supabase = get_supabase_client()
+    username = _safe_username(username)
+
+    supabase.table("sessions").insert({
+        "username": username,
         "scenario": scenario,
-        "character": character,
-        "level": level,
-        "tone": tone,
-        "history": history,
-        "feedback": feedback,
-    })
-    write_json(get_sessions_path(username), sessions)
+        "character_name": character,
+        "conversation": history,
+        "feedback": {
+            "text": feedback,
+            "level": level,
+            "tone": tone,
+        },
+    }).execute()
 
 
 def load_sessions(limit=10, username: str | None = None):
-    sessions = read_json(get_sessions_path(username), [])
-    return list(reversed(sessions[-limit:]))
+    supabase = get_supabase_client()
+    username = _safe_username(username)
+
+    result = (
+        supabase.table("sessions")
+        .select("created_at, scenario, character_name, conversation, feedback")
+        .eq("username", username)
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+
+    sessions = []
+    for row in result.data or []:
+        feedback = row.get("feedback") or {}
+        if isinstance(feedback, str):
+            feedback = {"text": feedback}
+        sessions.append({
+            "created_at": row.get("created_at", ""),
+            "scenario": row.get("scenario", ""),
+            "character": row.get("character_name", ""),
+            "level": feedback.get("level", ""),
+            "tone": feedback.get("tone", ""),
+            "history": row.get("conversation", []),
+            "feedback": feedback.get("text", ""),
+        })
+    return sessions
+
+
+def load_profile(username: str | None = None):
+    supabase = get_supabase_client()
+    username = _safe_username(username)
+    profile = default_profile()
+
+    sessions = (
+        supabase.table("sessions")
+        .select("created_at")
+        .eq("username", username)
+        .order("created_at", desc=True)
+        .limit(1000)
+        .execute()
+    )
+    session_rows = sessions.data or []
+    profile["total_sessions"] = len(session_rows)
+    if session_rows:
+        profile["last_practice"] = session_rows[0].get("created_at")
+
+    errors = (
+        supabase.table("error_profile")
+        .select("error, correction, explanation, frequency, updated_at")
+        .eq("username", username)
+        .order("frequency", desc=True)
+        .limit(25)
+        .execute()
+    )
+    profile["common_errors"] = [
+        {
+            "mistake": row.get("error", ""),
+            "correction": row.get("correction", ""),
+            "note": row.get("explanation", ""),
+            "count": row.get("frequency", 1),
+            "updated_at": row.get("updated_at", ""),
+        }
+        for row in (errors.data or [])
+    ]
+
+    expressions = (
+        supabase.table("native_expressions")
+        .select("expression, meaning, example, tone, scenario, created_at")
+        .eq("username", username)
+        .order("created_at", desc=True)
+        .limit(50)
+        .execute()
+    )
+    # Agrupación simple por expresión para mostrar frecuencia aunque la tabla guarde eventos individuales.
+    grouped = {}
+    for row in expressions.data or []:
+        key = (row.get("expression") or "").lower().strip()
+        if not key:
+            continue
+        if key not in grouped:
+            grouped[key] = {
+                "expression": row.get("expression", ""),
+                "meaning": row.get("meaning", ""),
+                "scenario": row.get("scenario", "general"),
+                "tone": row.get("tone", "neutral"),
+                "example": row.get("example", ""),
+                "count": 1,
+                "last_seen": row.get("created_at", ""),
+            }
+        else:
+            grouped[key]["count"] += 1
+    profile["native_expressions"] = sorted(grouped.values(), key=lambda x: x.get("count", 1), reverse=True)
+
+    return profile
+
+
+def save_profile(profile, username: str | None = None):
+    # La versión Supabase no guarda perfiles como archivo único.
+    # El perfil se reconstruye desde sessions, error_profile y native_expressions.
+    return None
+
+
+def upsert_error(username: str | None, mistake: str, correction: str, explanation: str = ""):
+    supabase = get_supabase_client()
+    username = _safe_username(username)
+    mistake = (mistake or "").strip()
+    correction = (correction or "").strip()
+    if not mistake or not correction:
+        return
+
+    existing = (
+        supabase.table("error_profile")
+        .select("id, frequency")
+        .eq("username", username)
+        .eq("error", mistake)
+        .limit(1)
+        .execute()
+    )
+
+    now = datetime.now().isoformat(timespec="seconds")
+    if existing.data:
+        row = existing.data[0]
+        supabase.table("error_profile").update({
+            "correction": correction,
+            "explanation": explanation,
+            "frequency": int(row.get("frequency") or 1) + 1,
+            "updated_at": now,
+        }).eq("id", row["id"]).execute()
+    else:
+        supabase.table("error_profile").insert({
+            "username": username,
+            "error": mistake,
+            "correction": correction,
+            "explanation": explanation,
+            "frequency": 1,
+            "updated_at": now,
+        }).execute()
+
+
+def insert_native_expression(username: str | None, expression: str, meaning: str = "", example: str = "", tone: str = "neutral", scenario: str = "general"):
+    supabase = get_supabase_client()
+    username = _safe_username(username)
+    expression = (expression or "").strip()
+    if not expression:
+        return
+
+    supabase.table("native_expressions").insert({
+        "username": username,
+        "expression": expression,
+        "meaning": meaning or "",
+        "example": example or "",
+        "tone": tone or "neutral",
+        "scenario": scenario or "general",
+    }).execute()
