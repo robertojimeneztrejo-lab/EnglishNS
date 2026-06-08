@@ -1,37 +1,15 @@
 import hashlib
 import hmac
-import json
 import re
 import secrets
-from pathlib import Path
 
-DATA_DIR = Path("data")
-USERS_PATH = DATA_DIR / "users.json"
+from supabase_client import get_supabase_client
 
 USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]{3,30}$")
 
 
-def _ensure_data_dir():
-    DATA_DIR.mkdir(exist_ok=True)
-
-
-def _read_users():
-    _ensure_data_dir()
-    if not USERS_PATH.exists():
-        return {}
-    try:
-        return json.loads(USERS_PATH.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return {}
-
-
-def _write_users(users):
-    _ensure_data_dir()
-    USERS_PATH.write_text(json.dumps(users, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
 def normalize_username(username: str) -> str:
-    return username.strip().lower()
+    return (username or "").strip().lower()
 
 
 def validate_username(username: str) -> tuple[bool, str]:
@@ -41,7 +19,7 @@ def validate_username(username: str) -> tuple[bool, str]:
     return True, ""
 
 
-def hash_password(password: str, salt: str | None = None) -> tuple[str, str]:
+def _hash_password(password: str, salt: str | None = None) -> tuple[str, str]:
     if salt is None:
         salt = secrets.token_hex(16)
     password_hash = hashlib.pbkdf2_hmac(
@@ -53,33 +31,66 @@ def hash_password(password: str, salt: str | None = None) -> tuple[str, str]:
     return salt, password_hash
 
 
+def _pack_hash(salt: str, password_hash: str) -> str:
+    return f"{salt}${password_hash}"
+
+
+def _unpack_hash(stored_hash: str) -> tuple[str, str]:
+    if "$" not in stored_hash:
+        return "", stored_hash
+    salt, password_hash = stored_hash.split("$", 1)
+    return salt, password_hash
+
+
 def create_user(username: str, password: str) -> tuple[bool, str]:
     username = normalize_username(username)
     valid, message = validate_username(username)
     if not valid:
         return False, message
-    if len(password) < 6:
+    if len(password or "") < 6:
         return False, "La contraseña debe tener al menos 6 caracteres."
 
-    users = _read_users()
-    if username in users:
+    supabase = get_supabase_client()
+
+    existing = (
+        supabase.table("users_profile")
+        .select("username")
+        .eq("username", username)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
         return False, "Ese usuario ya existe. Intenta iniciar sesión."
 
-    salt, password_hash = hash_password(password)
-    users[username] = {
-        "salt": salt,
-        "password_hash": password_hash,
-    }
-    _write_users(users)
+    salt, password_hash = _hash_password(password)
+    supabase.table("users_profile").insert({
+        "username": username,
+        "password_hash": _pack_hash(salt, password_hash),
+    }).execute()
+
     return True, "Usuario creado correctamente."
 
 
 def authenticate_user(username: str, password: str) -> bool:
     username = normalize_username(username)
-    users = _read_users()
-    user = users.get(username)
-    if not user:
+    if not username or not password:
         return False
 
-    _, attempted_hash = hash_password(password, user.get("salt", ""))
-    return hmac.compare_digest(attempted_hash, user.get("password_hash", ""))
+    supabase = get_supabase_client()
+    result = (
+        supabase.table("users_profile")
+        .select("password_hash")
+        .eq("username", username)
+        .limit(1)
+        .execute()
+    )
+    if not result.data:
+        return False
+
+    stored = result.data[0].get("password_hash", "")
+    salt, stored_hash = _unpack_hash(stored)
+    if not salt or not stored_hash:
+        return False
+
+    _, attempted_hash = _hash_password(password, salt)
+    return hmac.compare_digest(attempted_hash, stored_hash)
