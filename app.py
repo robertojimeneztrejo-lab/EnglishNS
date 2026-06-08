@@ -7,6 +7,7 @@ from gemini_client import generate_text, GeminiClientError
 from feedback import generate_feedback
 from storage import load_profile, load_sessions
 from auth import authenticate_user, create_user, normalize_username
+from supabase_client import SupabaseConfigError
 
 st.set_page_config(
     page_title="NativeFlow English",
@@ -107,7 +108,7 @@ def show_login_screen():
                 else:
                     st.error(message)
 
-    st.caption("Nota: este login es básico para pruebas. Para una versión pública conviene migrar a Supabase Auth, Firebase o Google Login.")
+    st.caption("Login conectado a Supabase. Para una versión pública avanzada, más adelante se puede migrar a Supabase Auth o Google Login.")
 
 
 def current_user():
@@ -117,7 +118,11 @@ def current_user():
 init_state()
 
 if not st.session_state.authenticated:
-    show_login_screen()
+    try:
+        show_login_screen()
+    except SupabaseConfigError as exc:
+        st.error(str(exc))
+        st.info("Revisa Streamlit Secrets: SUPABASE_URL y SUPABASE_KEY.")
     st.stop()
 
 st.markdown('<div class="main-title">NativeFlow English</div>', unsafe_allow_html=True)
@@ -286,6 +291,8 @@ with tab_help:
 ```toml
 GEMINI_API_KEY = "TU_API_KEY"
 GEMINI_MODEL = "gemini-2.5-flash"
+SUPABASE_URL = "https://tu-proyecto.supabase.co"
+SUPABASE_KEY = "sb_publishable_xxxxxxxxx"
 ```
 
 4. Ejecuta `app.py` como archivo principal.
@@ -296,8 +303,8 @@ GEMINI_MODEL = "gemini-2.5-flash"
     st.subheader("Próximas mejoras sugeridas")
     st.markdown(
         """
-- Base de datos Supabase.  
 - Recuperación de contraseña.  
+- Supabase Auth / Google Login.  
 - Modo carrera profesional.  
 - Sistema de XP y niveles.  
 - Audio con Gemini Live o TTS.  
